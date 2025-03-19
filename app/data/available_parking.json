@@ -1,0 +1,46 @@
+[
+  {
+    "id": "96ttcmtcw",
+    "location": "current",
+    "spots": 3,
+    "address": "210, Davis Avenue, Harrison, NJ, 07029",
+    "coordinates": {
+      "lat": 40.7484849,
+      "lng": -74.1521634
+    },
+    "timestamp": "2025-03-19T04:15:36.584Z"
+  },
+  {
+    "id": "g0mv6f6sb",
+    "location": "other",
+    "spots": 2,
+    "address": "300 Cross St, Harrison, NJ 07029",
+    "coordinates": {
+      "lat": 40.7496446,
+      "lng": -74.1548409
+    },
+    "timestamp": "2025-03-19T04:43:59.464Z"
+  },
+  {
+    "id": "joctgxchw",
+    "location": "other",
+    "spots": 3,
+    "address": "623 Harrison Ave, Harrison, NJ 07029",
+    "coordinates": {
+      "lat": 40.7471385,
+      "lng": -74.1510741
+    },
+    "timestamp": "2025-03-19T04:48:25.447Z"
+  },
+  {
+    "id": "ism3ftyt6",
+    "location": "current",
+    "spots": 4,
+    "address": "545, Hamilton Street, Harrison, NJ, 07029",
+    "coordinates": {
+      "lat": 40.7485441,
+      "lng": -74.1522712
+    },
+    "timestamp": "2025-03-19T04:53:41.576Z"
+  }
+]
