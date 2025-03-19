@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
 import bcrypt from 'bcryptjs';
-import clientPromise from '@/app/lib/mongodb';
-import { User } from '@/app/models/User';
+import { getCollection } from '@/app/lib/mongodb';
 
 export async function POST(request: Request) {
   try {
@@ -15,10 +14,8 @@ export async function POST(request: Request) {
       );
     }
 
-    // Connect to MongoDB
-    const client = await clientPromise;
-    const db = client.db('data');
-    const users = db.collection('users');
+    // Get users collection
+    const users = await getCollection('users');
 
     // Find user
     const user = await users.findOne({ email });
@@ -30,8 +27,8 @@ export async function POST(request: Request) {
     }
 
     // Verify password
-    const isValidPassword = await bcrypt.compare(password, user.password);
-    if (!isValidPassword) {
+    const isValid = await bcrypt.compare(password, user.password);
+    if (!isValid) {
       return NextResponse.json(
         { message: 'Invalid credentials' },
         { status: 401 }
@@ -41,10 +38,10 @@ export async function POST(request: Request) {
     // Remove password from response
     const { password: _, ...userWithoutPassword } = user;
 
-    return NextResponse.json({
-      message: 'Login successful',
-      user: userWithoutPassword,
-    });
+    return NextResponse.json(
+      { message: 'Login successful', user: userWithoutPassword },
+      { status: 200 }
+    );
   } catch (error) {
     console.error('Login error:', error);
     return NextResponse.json(

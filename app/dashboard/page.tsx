@@ -20,7 +20,7 @@ export default function Dashboard() {
     // Check if user is logged in
     const userData = localStorage.getItem("user");
     if (!userData) {
-      router.push("/login");
+      router.push("/");
       return;
     }
 
@@ -29,8 +29,12 @@ export default function Dashboard() {
   }, [router]);
 
   const handleLogout = () => {
+    // Clear all session data
     localStorage.removeItem("user");
-    router.push("/login");
+    sessionStorage.clear();
+
+    // Redirect to homepage
+    router.push("/");
   };
 
   if (!user || isLoading) {

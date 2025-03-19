@@ -1,24 +1,21 @@
 import { NextResponse } from 'next/server';
 import bcrypt from 'bcryptjs';
-import clientPromise from '@/app/lib/mongodb';
-import { User } from '@/app/models/User';
+import { getCollection } from '@/app/lib/mongodb';
 
 export async function POST(request: Request) {
   try {
-    const { email, password, name } = await request.json();
+    const { name, email, password } = await request.json();
 
     // Validate input
-    if (!email || !password || !name) {
+    if (!name || !email || !password) {
       return NextResponse.json(
         { message: 'Missing required fields' },
         { status: 400 }
       );
     }
 
-    // Connect to MongoDB
-    const client = await clientPromise;
-    const db = client.db('data');
-    const users = db.collection('users');
+    // Get users collection
+    const users = await getCollection('users');
 
     // Check if user already exists
     const existingUser = await users.findOne({ email });
@@ -30,24 +27,23 @@ export async function POST(request: Request) {
     }
 
     // Hash password
-    const hashedPassword = await bcrypt.hash(password, 10);
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(password, salt);
 
     // Create user
-    const user: Omit<User, '_id'> = {
+    const result = await users.insertOne({
+      name,
       email,
       password: hashedPassword,
-      name,
       createdAt: new Date(),
-      updatedAt: new Date(),
-    };
+    });
 
-    const result = await users.insertOne(user);
-
-    // Remove password from response
-    const { password: _, ...userWithoutPassword } = user;
+    if (!result.acknowledged) {
+      throw new Error('Failed to create user');
+    }
 
     return NextResponse.json(
-      { message: 'User created successfully', user: userWithoutPassword },
+      { message: 'User created successfully' },
       { status: 201 }
     );
   } catch (error) {
