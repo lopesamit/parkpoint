@@ -1,11 +1,9 @@
 import { NextResponse } from 'next/server';
-import fs from 'fs';
-import path from 'path';
+import { getCollection } from "@/app/lib/mongodb";
+import { ObjectId } from "mongodb";
 
-const PARKING_FILE_PATH = path.join(process.cwd(), 'app/data/available_parking.json');
-
-interface ParkingReport {
-  id: string;
+interface ParkingSpot {
+  _id: ObjectId;
   location: "current" | "other";
   spots: number;
   address: string;
@@ -13,17 +11,90 @@ interface ParkingReport {
     lat: number;
     lng: number;
   };
-  timestamp: string;
+  timestamp: Date;
+  status: "active" | "taken";
+  distance?: number;
 }
 
-// Calculate distance between two points using the Haversine formula
+export async function GET(request: Request) {
+  try {
+    const { searchParams } = new URL(request.url);
+    const lat = parseFloat(searchParams.get('lat') || '0');
+    const lng = parseFloat(searchParams.get('lng') || '0');
+
+    if (!lat || !lng) {
+      return NextResponse.json(
+        { message: 'Missing coordinates' },
+        { status: 400 }
+      );
+    }
+
+    // Get the reported_parking collection
+    const reportedParking = await getCollection("reported_parking");
+
+    // Find all active parking spots
+    const spots = await reportedParking
+      .find({ status: "active" })
+      .sort({ timestamp: -1 }) // Sort by newest first
+      .toArray() as ParkingSpot[];
+
+    // Calculate distances and filter spots within radius
+    const RADIUS_MILES = 0.5; // 0.5 miles radius
+    const nearbySpots = spots
+      .map((spot) => {
+        const distance = calculateDistance(
+          lat,
+          lng,
+          spot.coordinates.lat,
+          spot.coordinates.lng
+        );
+        return {
+          ...spot,
+          distance,
+        };
+      })
+      .filter((spot) => spot.distance <= RADIUS_MILES)
+      .sort((a, b) => {
+        // Sort by timestamp first (newest), then by distance
+        const timeDiff = b.timestamp.getTime() - a.timestamp.getTime();
+        if (timeDiff !== 0) return timeDiff;
+        return a.distance! - b.distance!;
+      })
+      .slice(0, 10); // Limit to 10 nearest spots
+
+    // Check if any spots were found
+    if (nearbySpots.length === 0) {
+      return NextResponse.json({
+        message: "No parking spots available within 0.5 miles of your location. Try expanding your search radius or report a new parking spot.",
+        spots: [],
+        total: 0,
+        radius: RADIUS_MILES
+      });
+    }
+
+    return NextResponse.json({
+      message: `Found ${nearbySpots.length} parking spot${nearbySpots.length !== 1 ? 's' : ''} near you`,
+      spots: nearbySpots,
+      total: nearbySpots.length,
+      radius: RADIUS_MILES
+    });
+  } catch (error) {
+    console.error('Error searching parking spots:', error);
+    return NextResponse.json(
+      { message: 'Failed to search parking spots' },
+      { status: 500 }
+    );
+  }
+}
+
+// Helper function to calculate distance between two points using the Haversine formula
 function calculateDistance(
   lat1: number,
   lon1: number,
   lat2: number,
   lon2: number
 ): number {
-  const R = 6371; // Earth's radius in kilometers
+  const R = 3959; // Earth's radius in miles
   const dLat = toRad(lat2 - lat1);
   const dLon = toRad(lon2 - lon1);
   const a =
@@ -38,65 +109,4 @@ function calculateDistance(
 
 function toRad(degrees: number): number {
   return (degrees * Math.PI) / 180;
-}
-
-export async function GET(request: Request) {
-  try {
-    const { searchParams } = new URL(request.url);
-    const lat = parseFloat(searchParams.get('lat') || '0');
-    const lng = parseFloat(searchParams.get('lng') || '0');
-    const radius = parseFloat(searchParams.get('radius') || '5'); // Default 5km radius
-
-    if (!lat || !lng) {
-      return NextResponse.json(
-        { message: 'Latitude and longitude are required' },
-        { status: 400 }
-      );
-    }
-
-    // Read parking reports
-    let reports: ParkingReport[] = [];
-    if (fs.existsSync(PARKING_FILE_PATH)) {
-      const fileContent = fs.readFileSync(PARKING_FILE_PATH, 'utf8');
-      reports = JSON.parse(fileContent);
-    }
-
-    // First sort by timestamp (newest first)
-    reports.sort((a, b) => {
-      return new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime();
-    });
-
-    // Then filter and sort by distance
-    const nearbySpots = reports
-      .map(report => ({
-        ...report,
-        distance: calculateDistance(
-          lat,
-          lng,
-          report.coordinates.lat,
-          report.coordinates.lng
-        )
-      }))
-      .filter(spot => spot.distance <= radius)
-      .sort((a, b) => {
-        // First sort by timestamp (newest first)
-        const timeDiff = new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime();
-        if (timeDiff !== 0) return timeDiff;
-        // If timestamps are equal, sort by distance
-        return a.distance - b.distance;
-      })
-      .slice(0, 10); // Limit to 10 nearest spots
-
-    return NextResponse.json({
-      spots: nearbySpots,
-      total: nearbySpots.length,
-      radius
-    });
-  } catch (error) {
-    console.error('Error searching parking spots:', error);
-    return NextResponse.json(
-      { message: 'Failed to search parking spots' },
-      { status: 500 }
-    );
-  }
 } 

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Map from "../components/Map";
+import Link from "next/link";
 
 interface User {
   name: string;
@@ -17,24 +18,44 @@ export default function Dashboard() {
   const GOOGLE_MAPS_API_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || "";
 
   useEffect(() => {
-    // Check if user is logged in
-    const userData = localStorage.getItem("user");
-    if (!userData) {
-      router.push("/");
-      return;
-    }
+    const checkAuth = async () => {
+      try {
+        const response = await fetch("/api/auth/check");
+        if (!response.ok) {
+          throw new Error("Not authenticated");
+        }
+        const userData = await response.json();
+        setUser(userData);
+      } catch (error) {
+        console.error("Auth check failed:", error);
+        router.push("/");
+        return;
+      } finally {
+        setIsLoading(false);
+      }
+    };
 
-    setUser(JSON.parse(userData));
-    setIsLoading(false);
+    checkAuth();
   }, [router]);
 
-  const handleLogout = () => {
-    // Clear all session data
-    localStorage.removeItem("user");
-    sessionStorage.clear();
+  const handleLogout = async () => {
+    try {
+      // Call the logout API endpoint
+      await fetch("/api/auth/logout", {
+        method: "POST",
+      });
 
-    // Redirect to homepage
-    router.push("/");
+      // Clear all client-side storage
+      localStorage.removeItem("user");
+      sessionStorage.clear();
+
+      // Redirect to homepage
+      router.push("/");
+    } catch (error) {
+      console.error("Logout error:", error);
+      // Still try to redirect even if there's an error
+      router.push("/");
+    }
   };
 
   if (!user || isLoading) {
@@ -64,9 +85,16 @@ export default function Dashboard() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between h-16">
             <div className="flex items-center">
-              <h1 className="text-xl font-bold text-gray-900 dark:text-white">
+              <Link
+                href="/"
+                className="text-2xl font-bold text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 transition-colors"
+                onClick={(e) => {
+                  e.preventDefault();
+                  router.push("/");
+                }}
+              >
                 ParkPoint
-              </h1>
+              </Link>
             </div>
             <div className="flex items-center">
               <span className="text-gray-700 dark:text-gray-300 mr-4">

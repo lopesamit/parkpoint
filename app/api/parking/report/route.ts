@@ -1,62 +1,47 @@
-import { NextResponse } from 'next/server';
-import fs from 'fs';
-import path from 'path';
-
-const PARKING_FILE_PATH = path.join(process.cwd(), 'app/data/available_parking.json');
-
-interface ParkingReport {
-  id: string;
-  location: "current" | "other";
-  spots: number;
-  address: string;
-  coordinates: {
-    lat: number;
-    lng: number;
-  };
-  timestamp: string;
-}
+import { NextResponse } from "next/server";
+import { getCollection } from "@/app/lib/mongodb";
 
 export async function POST(request: Request) {
   try {
     const data = await request.json();
-    
-    // Create data directory if it doesn't exist
-    const dataDir = path.dirname(PARKING_FILE_PATH);
-    if (!fs.existsSync(dataDir)) {
-      fs.mkdirSync(dataDir, { recursive: true });
+    const { location, spots, address, coordinates } = data;
+
+    // Validate required fields
+    if (!location || !spots || !address || !coordinates) {
+      return NextResponse.json(
+        { message: "Missing required fields" },
+        { status: 400 }
+      );
     }
 
-    // Read existing reports or initialize empty array
-    let reports: ParkingReport[] = [];
-    if (fs.existsSync(PARKING_FILE_PATH)) {
-      const fileContent = fs.readFileSync(PARKING_FILE_PATH, 'utf8');
-      reports = JSON.parse(fileContent);
-    }
+    // Get the reported_parking collection
+    const reportedParking = await getCollection("reported_parking");
 
-    // Create new report
-    const newReport: ParkingReport = {
-      id: Math.random().toString(36).substr(2, 9),
-      location: data.location,
-      spots: data.spots,
-      address: data.address,
-      coordinates: data.coordinates,
-      timestamp: new Date().toISOString(),
+    // Create the parking report document
+    const report = {
+      location,
+      spots,
+      address,
+      coordinates,
+      timestamp: new Date(),
+      status: "active", // You can use this to mark spots as taken/available
     };
 
-    // Add new report to array
-    reports.push(newReport);
+    // Insert the report into MongoDB
+    const result = await reportedParking.insertOne(report);
 
-    // Save updated reports to file
-    fs.writeFileSync(PARKING_FILE_PATH, JSON.stringify(reports, null, 2));
+    if (!result.acknowledged) {
+      throw new Error("Failed to save parking report");
+    }
 
     return NextResponse.json(
-      { message: 'Parking report saved successfully', report: newReport },
+      { message: "Parking spot reported successfully", report },
       { status: 201 }
     );
   } catch (error) {
-    console.error('Error saving parking report:', error);
+    console.error("Error reporting parking:", error);
     return NextResponse.json(
-      { message: 'Failed to save parking report' },
+      { message: "Failed to report parking spot" },
       { status: 500 }
     );
   }

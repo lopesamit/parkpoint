@@ -99,10 +99,6 @@ const formatTimeAgo = (timestamp: string) => {
   }
 };
 
-const kmToMiles = (km: number) => {
-  return (km * 0.621371).toFixed(1);
-};
-
 export default function Map({ apiKey, onLocationUpdate }: MapProps) {
   const [currentLocation, setCurrentLocation] = useState<{
     lat: number;
@@ -341,6 +337,11 @@ export default function Map({ apiKey, onLocationUpdate }: MapProps) {
 
       const data = await response.json();
       setSearchResults(data.spots);
+
+      // Display the message from the API
+      if (data.message) {
+        setSearchError(data.message);
+      }
     } catch (err) {
       console.error("Error searching parking spots:", err);
       setSearchError("Failed to search for parking spots. Please try again.");
@@ -783,7 +784,7 @@ export default function Map({ apiKey, onLocationUpdate }: MapProps) {
                         {spot.spots} spot{spot.spots !== 1 ? "s" : ""} available
                       </p>
                       <p className="text-gray-500 dark:text-gray-400">
-                        {kmToMiles(spot.distance)} miles away
+                        {spot.distance.toFixed(1)} miles away
                       </p>
                       <p className="text-gray-500 dark:text-gray-400 text-xs">
                         Last reported {formatTimeAgo(spot.timestamp)}

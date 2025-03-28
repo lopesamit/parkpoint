@@ -38,14 +38,27 @@ export async function POST(request: Request) {
     // Remove password from response
     const { password: _, ...userWithoutPassword } = user;
 
-    return NextResponse.json(
+    // Create response with user data
+    const response = NextResponse.json(
       { message: 'Login successful', user: userWithoutPassword },
       { status: 200 }
     );
+
+    // Set cookie with user data
+    response.cookies.set({
+      name: 'user',
+      value: JSON.stringify(userWithoutPassword),
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 60 * 60 * 24 * 7, // 1 week
+    });
+
+    return response;
   } catch (error) {
     console.error('Login error:', error);
     return NextResponse.json(
-      { message: 'Internal server error', error: JSON.stringify(error) },
+      { message: 'Internal server error' },
       { status: 500 }
     );
   }
