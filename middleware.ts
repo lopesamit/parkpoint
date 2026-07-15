@@ -1,42 +1,33 @@
-import { NextResponse } from 'next/server';
-import type { NextRequest } from 'next/server';
+import { NextResponse } from "next/server";
+import type { NextRequest } from "next/server";
+import { SESSION_COOKIE, verifySessionToken } from "@/app/lib/session";
 
-// Define public routes that don't require authentication
-const publicRoutes = ['/', '/login', '/signup'];
+const publicRoutes = ["/", "/login", "/signup", "/forgot-password", "/reset-password"];
 
-export function middleware(request: NextRequest) {
-  // Get the pathname of the request
+export async function middleware(request: NextRequest) {
   const path = request.nextUrl.pathname;
-
-  // Check if the path is a public route
   const isPublicRoute = publicRoutes.includes(path);
 
-  // Get the user token from cookies
-  const userToken = request.cookies.get('user')?.value;
+  const token = request.cookies.get(SESSION_COOKIE)?.value;
+  const session = await verifySessionToken(token);
 
-  // If the path is public and user is logged in, redirect to dashboard
-  if (isPublicRoute && userToken) {
-    return NextResponse.redirect(new URL('/dashboard', request.url));
+  // Authenticated users skip the marketing/auth pages
+  if (isPublicRoute && session) {
+    return NextResponse.redirect(new URL("/dashboard", request.url));
   }
 
-  // If the path is not public and user is not logged in, redirect to login
-  if (!isPublicRoute && !userToken) {
-    return NextResponse.redirect(new URL('/', request.url));
+  if (!isPublicRoute && !session) {
+    const response = NextResponse.redirect(new URL("/login", request.url));
+    if (token) {
+      // Clear invalid/expired tokens so the redirect doesn't loop
+      response.cookies.delete(SESSION_COOKIE);
+    }
+    return response;
   }
 
   return NextResponse.next();
 }
 
-// Configure which routes to run middleware on
 export const config = {
-  matcher: [
-    /*
-     * Match all request paths except for the ones starting with:
-     * - api (API routes)
-     * - _next/static (static files)
-     * - _next/image (image optimization files)
-     * - favicon.ico (favicon file)
-     */
-    '/((?!api|_next/static|_next/image|favicon.ico).*)',
-  ],
-}; 
+  matcher: ["/((?!api|_next/static|_next/image|favicon.ico|icon.svg).*)"],
+};

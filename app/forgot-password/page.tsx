@@ -1,15 +1,15 @@
 import type { Metadata } from "next";
 import AuthLayout from "../components/AuthLayout";
-import SignupForm from "../components/SignupForm";
+import ForgotPasswordForm from "../components/ForgotPasswordForm";
 
 export const metadata: Metadata = {
-  title: "Create account",
+  title: "Forgot password",
 };
 
-export default function SignupPage() {
+export default function ForgotPasswordPage() {
   return (
     <AuthLayout>
-      <SignupForm />
+      <ForgotPasswordForm />
     </AuthLayout>
   );
 }

@@ -1,25 +1,16 @@
-import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
+import { NextResponse } from "next/server";
+import { getSession } from "@/app/lib/auth";
+
+export const dynamic = "force-dynamic";
 
 export async function GET() {
-  try {
-    const cookieStore = cookies();
-    const userCookie = cookieStore.get('user');
+  const session = await getSession();
 
-    if (!userCookie) {
-      return NextResponse.json(
-        { error: 'Not authenticated' },
-        { status: 401 }
-      );
-    }
-
-    const userData = JSON.parse(userCookie.value);
-    return NextResponse.json(userData);
-  } catch (error) {
-    console.error('Auth check error:', error);
-    return NextResponse.json(
-      { error: 'Authentication failed' },
-      { status: 500 }
-    );
+  if (!session) {
+    return NextResponse.json({ message: "Not authenticated" }, { status: 401 });
   }
-} 
+
+  return NextResponse.json({
+    user: { id: session.sub, name: session.name, email: session.email },
+  });
+}

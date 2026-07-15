@@ -4,25 +4,116 @@
 
 :root {
   --background: #f8fafc;
-  --foreground: #1e293b;
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --foreground: #0f172a;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0f172a;
+    --background: #020617;
     --foreground: #f8fafc;
   }
 }
 
-body {
-  background-color: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+@layer base {
+  html {
+    scroll-behavior: smooth;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    background-color: var(--background);
+    color: var(--foreground);
+  }
+
+  ::selection {
+    background-color: rgba(16, 185, 129, 0.3);
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl bg-brand-500 px-5 py-3 text-sm font-semibold text-ink-950 transition-all duration-200 hover:bg-brand-400 hover:shadow-glow focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50;
+  }
+
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl border border-ink-200 bg-white px-5 py-3 text-sm font-semibold text-ink-800 transition-all duration-200 hover:border-ink-300 hover:bg-ink-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink-400 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 dark:border-ink-700 dark:bg-ink-900 dark:text-ink-100 dark:hover:border-ink-600 dark:hover:bg-ink-800;
+  }
+
+  .btn-ghost-dark {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl border border-white/15 bg-white/5 px-5 py-3 text-sm font-semibold text-white backdrop-blur transition-all duration-200 hover:border-white/30 hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50;
+  }
+
+  .input-field {
+    @apply block w-full rounded-xl border border-ink-200 bg-white px-4 py-3 text-sm text-ink-900 placeholder-ink-400 shadow-sm transition-colors focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/25 dark:border-ink-700 dark:bg-ink-900 dark:text-ink-50 dark:placeholder-ink-500;
+  }
+
+  .card-surface {
+    @apply rounded-2xl border border-ink-200/70 bg-white shadow-card dark:border-ink-800 dark:bg-ink-900;
+  }
+}
+
+/* Google Places autocomplete dropdown, restyled to match the app */
+.pac-container {
+  margin-top: 6px;
+  border: 1px solid rgb(226 232 240);
+  border-radius: 14px;
+  box-shadow: 0 16px 48px -12px rgba(2, 6, 23, 0.25);
+  font-family: var(--font-inter), system-ui, sans-serif;
+  padding: 4px;
+  background: #ffffff;
+  z-index: 9999 !important;
+}
+
+.pac-item {
+  border: none;
+  border-radius: 10px;
+  padding: 8px 10px;
+  cursor: pointer;
+  font-size: 13px;
+  color: rgb(51 65 85);
+}
+
+.pac-item:hover,
+.pac-item-selected {
+  background: rgba(16, 185, 129, 0.1);
+}
+
+.pac-item-query {
+  font-size: 13px;
+  font-weight: 600;
+  color: rgb(15 23 42);
+}
+
+.pac-icon {
+  display: none;
+}
+
+@media (prefers-color-scheme: dark) {
+  .pac-container {
+    background: rgb(15 23 42);
+    border-color: rgb(51 65 85);
+  }
+  .pac-item {
+    color: rgb(203 213 225);
+  }
+  .pac-item-query {
+    color: rgb(248 250 252);
+  }
+  .pac-item:hover,
+  .pac-item-selected {
+    background: rgba(16, 185, 129, 0.15);
+  }
+}
+
+/* Thin, unobtrusive scrollbars for result lists */
+.slim-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+.slim-scroll::-webkit-scrollbar-thumb {
+  background: rgba(100, 116, 139, 0.4);
+  border-radius: 9999px;
+}
+.slim-scroll::-webkit-scrollbar-track {
+  background: transparent;
 }

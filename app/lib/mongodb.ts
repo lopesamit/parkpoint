@@ -1,49 +1,42 @@
-import { MongoClient } from 'mongodb';
+import { MongoClient } from "mongodb";
 
-if (!process.env.MONGODB_URI) {
-  throw new Error('Please add your Mongo URI to .env.local');
-}
-
-const uri = process.env.MONGODB_URI;
 const options = {
   maxPoolSize: 10,
   serverSelectionTimeoutMS: 5000,
   socketTimeoutMS: 45000,
 };
 
-let client: MongoClient;
-let clientPromise: Promise<MongoClient>;
+// Cache the connection promise across HMR reloads in dev and across
+// invocations in prod. Connecting lazily (on first query, not at import
+// time) keeps builds and cold starts from dialing the database.
+const globalWithMongo = global as typeof globalThis & {
+  _mongoClientPromise?: Promise<MongoClient>;
+};
 
-if (process.env.NODE_ENV === 'development') {
-  // In development mode, use a global variable so that the value
-  // is preserved across module reloads caused by HMR (Hot Module Replacement).
-  let globalWithMongo = global as typeof globalThis & {
-    _mongoClientPromise?: Promise<MongoClient>;
-  };
-
+function getClientPromise(): Promise<MongoClient> {
   if (!globalWithMongo._mongoClientPromise) {
-    client = new MongoClient(uri, options);
-    globalWithMongo._mongoClientPromise = client.connect();
+    const uri = process.env.MONGODB_URI;
+    if (!uri) {
+      throw new Error("MONGODB_URI is not set. Add it to your environment.");
+    }
+    const client = new MongoClient(uri, options);
+    // Don't cache a failed connection: clear the slot so the next
+    // request retries (e.g. after credentials or network are fixed).
+    globalWithMongo._mongoClientPromise = client.connect().catch((error) => {
+      globalWithMongo._mongoClientPromise = undefined;
+      void client.close().catch(() => {});
+      throw error;
+    });
   }
-  clientPromise = globalWithMongo._mongoClientPromise;
-} else {
-  // In production mode, it's best to not use a global variable.
-  client = new MongoClient(uri, options);
-  clientPromise = client.connect();
+  return globalWithMongo._mongoClientPromise;
 }
 
-// Export a module-scoped MongoClient promise. By doing this in a
-// separate module, the client can be shared across functions.
-export default clientPromise;
-
-// Helper function to get the database instance
 export async function getDb() {
-  const client = await clientPromise;
-  return client.db('data');
+  const client = await getClientPromise();
+  return client.db("data");
 }
 
-// Helper function to get a collection
 export async function getCollection(name: string) {
   const db = await getDb();
   return db.collection(name);
-} 
+}

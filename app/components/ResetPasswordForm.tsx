@@ -1,49 +1,40 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { AlertCircle, Eye, EyeOff, Loader2 } from "lucide-react";
+import { AlertCircle, CheckCircle2, Eye, EyeOff, Loader2 } from "lucide-react";
 
-export default function SignupForm() {
-  const router = useRouter();
-  const [formData, setFormData] = useState({
-    name: "",
-    email: "",
-    password: "",
-    confirmPassword: "",
-  });
+interface ResetPasswordFormProps {
+  token: string;
+}
+
+export default function ResetPasswordForm({ token }: ResetPasswordFormProps) {
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-
-  const update = (field: keyof typeof formData) => (e: React.ChangeEvent<HTMLInputElement>) =>
-    setFormData((prev) => ({ ...prev, [field]: e.target.value }));
+  const [isSuccess, setIsSuccess] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
 
-    if (formData.password.length < 8) {
+    if (password.length < 8) {
       setError("Password must be at least 8 characters");
       return;
     }
-    if (formData.password !== formData.confirmPassword) {
+    if (password !== confirmPassword) {
       setError("Passwords do not match");
       return;
     }
 
     setIsLoading(true);
-
     try {
-      const response = await fetch("/api/auth/signup", {
+      const response = await fetch("/api/auth/reset-password", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: formData.name,
-          email: formData.email,
-          password: formData.password,
-        }),
+        body: JSON.stringify({ token, password }),
       });
 
       const data = await response.json();
@@ -51,71 +42,70 @@ export default function SignupForm() {
         throw new Error(data.message || "Something went wrong");
       }
 
-      // Signup sets the session cookie, so go straight to the app
-      router.push("/dashboard");
-      router.refresh();
+      setIsSuccess(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
+    } finally {
       setIsLoading(false);
     }
   };
 
+  if (!token) {
+    return (
+      <div className="text-center">
+        <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-red-500/15 text-red-600 dark:text-red-400">
+          <AlertCircle className="h-8 w-8" />
+        </div>
+        <h1 className="mt-6 font-display text-3xl font-bold tracking-tight text-ink-900 dark:text-white">
+          Invalid reset link
+        </h1>
+        <p className="mt-3 text-ink-500 dark:text-ink-400">
+          This link is missing its reset token. Use the link from your email,
+          or request a new one.
+        </p>
+        <Link href="/forgot-password" className="btn-primary mt-8 w-full">
+          Request a new link
+        </Link>
+      </div>
+    );
+  }
+
+  if (isSuccess) {
+    return (
+      <div className="text-center">
+        <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-brand-500/15 text-brand-600 dark:text-brand-400">
+          <CheckCircle2 className="h-8 w-8" />
+        </div>
+        <h1 className="mt-6 font-display text-3xl font-bold tracking-tight text-ink-900 dark:text-white">
+          Password updated
+        </h1>
+        <p className="mt-3 text-ink-500 dark:text-ink-400">
+          Your password has been changed. Sign in with your new password to
+          keep parking.
+        </p>
+        <Link href="/login" className="btn-primary mt-8 w-full">
+          Sign in
+        </Link>
+      </div>
+    );
+  }
+
   return (
     <div>
       <h1 className="font-display text-3xl font-bold tracking-tight text-ink-900 dark:text-white">
-        Create your account
+        Choose a new password
       </h1>
       <p className="mt-2 text-ink-500 dark:text-ink-400">
-        Join your neighbors and never circle the block again.
+        Make it at least 8 characters.
       </p>
 
       <form className="mt-8 space-y-5" onSubmit={handleSubmit} noValidate>
         <div>
           <label
-            htmlFor="name"
-            className="mb-1.5 block text-sm font-medium text-ink-700 dark:text-ink-300"
-          >
-            Full name
-          </label>
-          <input
-            id="name"
-            name="name"
-            type="text"
-            autoComplete="name"
-            required
-            className="input-field"
-            placeholder="Alex Driver"
-            value={formData.name}
-            onChange={update("name")}
-          />
-        </div>
-
-        <div>
-          <label
-            htmlFor="email"
-            className="mb-1.5 block text-sm font-medium text-ink-700 dark:text-ink-300"
-          >
-            Email address
-          </label>
-          <input
-            id="email"
-            name="email"
-            type="email"
-            autoComplete="email"
-            required
-            className="input-field"
-            placeholder="you@example.com"
-            value={formData.email}
-            onChange={update("email")}
-          />
-        </div>
-
-        <div>
-          <label
             htmlFor="password"
             className="mb-1.5 block text-sm font-medium text-ink-700 dark:text-ink-300"
           >
-            Password
+            New password
           </label>
           <div className="relative">
             <input
@@ -127,8 +117,8 @@ export default function SignupForm() {
               minLength={8}
               className="input-field pr-11"
               placeholder="At least 8 characters"
-              value={formData.password}
-              onChange={update("password")}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
             />
             <button
               type="button"
@@ -146,7 +136,7 @@ export default function SignupForm() {
             htmlFor="confirmPassword"
             className="mb-1.5 block text-sm font-medium text-ink-700 dark:text-ink-300"
           >
-            Confirm password
+            Confirm new password
           </label>
           <input
             id="confirmPassword"
@@ -155,9 +145,9 @@ export default function SignupForm() {
             autoComplete="new-password"
             required
             className="input-field"
-            placeholder="Repeat your password"
-            value={formData.confirmPassword}
-            onChange={update("confirmPassword")}
+            placeholder="Repeat your new password"
+            value={confirmPassword}
+            onChange={(e) => setConfirmPassword(e.target.value)}
           />
         </div>
 
@@ -175,23 +165,13 @@ export default function SignupForm() {
           {isLoading ? (
             <>
               <Loader2 className="h-4 w-4 animate-spin" />
-              Creating account…
+              Updating password…
             </>
           ) : (
-            "Create free account"
+            "Update password"
           )}
         </button>
       </form>
-
-      <p className="mt-8 text-center text-sm text-ink-500 dark:text-ink-400">
-        Already have an account?{" "}
-        <Link
-          href="/login"
-          className="font-semibold text-brand-600 transition-colors hover:text-brand-500 dark:text-brand-400 dark:hover:text-brand-300"
-        >
-          Sign in
-        </Link>
-      </p>
     </div>
   );
 }

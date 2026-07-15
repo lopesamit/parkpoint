@@ -1,56 +1,81 @@
-import { NextResponse } from 'next/server';
-import bcrypt from 'bcryptjs';
-import { getCollection } from '@/app/lib/mongodb';
+import { NextResponse } from "next/server";
+import bcrypt from "bcryptjs";
+import { getCollection } from "@/app/lib/mongodb";
+import {
+  createSessionToken,
+  sessionCookieOptions,
+  SESSION_COOKIE,
+} from "@/app/lib/session";
+
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export async function POST(request: Request) {
   try {
-    const { name, email, password } = await request.json();
+    const body = await request.json().catch(() => null);
+    const name = typeof body?.name === "string" ? body.name.trim() : "";
+    const email = typeof body?.email === "string" ? body.email.trim().toLowerCase() : "";
+    const password = typeof body?.password === "string" ? body.password : "";
 
-    // Validate input
     if (!name || !email || !password) {
       return NextResponse.json(
-        { message: 'Missing required fields' },
+        { message: "Name, email, and password are required" },
+        { status: 400 }
+      );
+    }
+    if (name.length > 100) {
+      return NextResponse.json(
+        { message: "Name is too long" },
+        { status: 400 }
+      );
+    }
+    if (!EMAIL_REGEX.test(email)) {
+      return NextResponse.json(
+        { message: "Please enter a valid email address" },
+        { status: 400 }
+      );
+    }
+    if (password.length < 8) {
+      return NextResponse.json(
+        { message: "Password must be at least 8 characters" },
         { status: 400 }
       );
     }
 
-    // Get users collection
-    const users = await getCollection('users');
+    const users = await getCollection("users");
 
-    // Check if user already exists
     const existingUser = await users.findOne({ email });
     if (existingUser) {
       return NextResponse.json(
-        { message: 'User already exists' },
-        { status: 400 }
+        { message: "An account with this email already exists" },
+        { status: 409 }
       );
     }
 
-    // Hash password
-    const salt = await bcrypt.genSalt(10);
-    const hashedPassword = await bcrypt.hash(password, salt);
-
-    // Create user
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const now = new Date();
     const result = await users.insertOne({
       name,
       email,
       password: hashedPassword,
-      createdAt: new Date(),
+      createdAt: now,
+      updatedAt: now,
     });
 
-    if (!result.acknowledged) {
-      throw new Error('Failed to create user');
-    }
+    const sessionUser = { id: result.insertedId.toString(), name, email };
+    const token = await createSessionToken(sessionUser);
 
-    return NextResponse.json(
-      { message: 'User created successfully' },
+    // Sign the user in immediately so they land on the dashboard
+    const response = NextResponse.json(
+      { message: "Account created", user: sessionUser },
       { status: 201 }
     );
+    response.cookies.set(SESSION_COOKIE, token, sessionCookieOptions);
+    return response;
   } catch (error) {
-    console.error('Signup error:', error);
+    console.error("Signup error:", error);
     return NextResponse.json(
-      { message: 'Internal server error' },
+      { message: "Something went wrong. Please try again." },
       { status: 500 }
     );
   }
-} 
+}

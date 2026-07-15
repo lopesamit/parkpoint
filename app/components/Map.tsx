@@ -1,65 +1,35 @@
 "use client";
 
 import { useState, useCallback, useRef, useEffect } from "react";
+import { GoogleMap, useJsApiLoader, Marker } from "@react-google-maps/api";
 import {
-  GoogleMap,
-  useJsApiLoader,
-  Marker,
-  DirectionsRenderer,
-} from "@react-google-maps/api";
+  AlertCircle,
+  Clock,
+  Crosshair,
+  Loader2,
+  MapPin,
+  Navigation,
+  Plus,
+  Search,
+  X,
+} from "lucide-react";
 import ReportParkingModal from "./ReportParkingModal";
 
-// Add styles for the custom marker
-const pulsingDotStyles = `
-  @keyframes pulsate {
-    0% { transform: scale(1); opacity: 1; }
-    50% { transform: scale(1.5); opacity: 0.5; }
-    100% { transform: scale(1); opacity: 1; }
-  }
-  .current-location-dot {
-    width: 16px;
-    height: 16px;
-    background-color: #4285f4;
-    border-radius: 50%;
-    border: 2px solid white;
-    box-shadow: 0 0 4px rgba(0,0,0,0.3);
-    animation: pulsate 2s ease-in-out infinite;
-  }
-  .current-location-dot::after {
-    content: '';
-    position: absolute;
-    width: 32px;
-    height: 32px;
-    background: rgba(66, 133, 244, 0.2);
-    border-radius: 50%;
-    left: -8px;
-    top: -8px;
-    z-index: -1;
-  }
-`;
+const defaultCenter = { lat: 40.7128, lng: -74.006 };
+const DEFAULT_ZOOM = 17;
+const libraries: "places"[] = ["places"];
 
-const containerStyle = {
-  width: "100%",
-  height: "500px",
-};
-
-const defaultCenter = {
-  lat: 40.7128, // New York City coordinates as a more central default
-  lng: -74.006,
-};
-
-// Add default zoom level
-const DEFAULT_ZOOM = 18;
-
-// Define libraries array as a static constant
-const libraries: ("marker" | "places")[] = ["marker", "places"];
+/** Muted map style so parking pins stand out */
+const MAP_STYLE: google.maps.MapTypeStyle[] = [
+  { featureType: "poi", elementType: "labels", stylers: [{ visibility: "off" }] },
+  { featureType: "transit", elementType: "labels.icon", stylers: [{ visibility: "off" }] },
+  { featureType: "water", stylers: [{ color: "#c9e2f5" }] },
+  { featureType: "road.highway", elementType: "geometry", stylers: [{ color: "#f5f1e6" }] },
+  { featureType: "landscape", stylers: [{ color: "#f4f4f2" }] },
+];
 
 interface MapProps {
   apiKey: string;
-  onLocationUpdate?: (
-    address: string,
-    location: { lat: number; lng: number }
-  ) => void;
 }
 
 interface ParkingSpot {
@@ -67,91 +37,62 @@ interface ParkingSpot {
   location: "current" | "other";
   spots: number;
   address: string;
-  coordinates: {
-    lat: number;
-    lng: number;
-  };
+  coordinates: { lat: number; lng: number };
   timestamp: string;
   distance: number;
 }
 
-// Add helper functions before the Map component
-const formatTimeAgo = (timestamp: string) => {
-  const reportedTime = new Date(timestamp);
-  const now = new Date();
+function formatTimeAgo(timestamp: string): string {
   const diffInMinutes = Math.floor(
-    (now.getTime() - reportedTime.getTime()) / (1000 * 60)
+    (Date.now() - new Date(timestamp).getTime()) / 60000
   );
+  if (diffInMinutes < 1) return "Just now";
+  if (diffInMinutes < 60) return `${diffInMinutes} min ago`;
+  const hours = Math.floor(diffInMinutes / 60);
+  return `${hours}h ${diffInMinutes % 60}m ago`;
+}
 
-  if (diffInMinutes < 1) {
-    return "Just now";
-  } else if (diffInMinutes < 60) {
-    return `${diffInMinutes} minute${diffInMinutes !== 1 ? "s" : ""} ago`;
-  } else {
-    const hours = Math.floor(diffInMinutes / 60);
-    const minutes = diffInMinutes % 60;
-    if (minutes === 0) {
-      return `${hours} hour${hours !== 1 ? "s" : ""} ago`;
-    }
-    return `${hours} hour${hours !== 1 ? "s" : ""} ${minutes} minute${
-      minutes !== 1 ? "s" : ""
-    } ago`;
-  }
-};
+function freshnessClasses(timestamp: string): string {
+  const minutes = (Date.now() - new Date(timestamp).getTime()) / 60000;
+  if (minutes < 15)
+    return "bg-brand-500/15 text-brand-700 dark:text-brand-400";
+  if (minutes < 40)
+    return "bg-amber-500/15 text-amber-700 dark:text-amber-400";
+  return "bg-ink-500/15 text-ink-600 dark:text-ink-400";
+}
 
-export default function Map({ apiKey, onLocationUpdate }: MapProps) {
+export default function Map({ apiKey }: MapProps) {
+  const [map, setMap] = useState<google.maps.Map | null>(null);
+  const [geocoder, setGeocoder] = useState<google.maps.Geocoder | null>(null);
+
   const [currentLocation, setCurrentLocation] = useState<{
     lat: number;
     lng: number;
   } | null>(null);
-  const [currentAddress, setCurrentAddress] = useState<string>("");
-  const [map, setMap] = useState<google.maps.Map | null>(null);
-  const [marker, setMarker] = useState<google.maps.Marker | null>(null);
+  const [currentAddress, setCurrentAddress] = useState("");
   const [isLocating, setIsLocating] = useState(false);
   const [locationError, setLocationError] = useState<string | null>(null);
+
+  // Where the user is searching (typed address), which can differ from where they are
+  const [searchCenter, setSearchCenter] = useState<{
+    lat: number;
+    lng: number;
+    label: string;
+  } | null>(null);
+
   const [showSearch, setShowSearch] = useState(false);
   const [searchAddress, setSearchAddress] = useState("");
-  const searchRef = useRef<HTMLDivElement>(null);
-  const [isReportModalOpen, setIsReportModalOpen] = useState(false);
-  const [geocoder, setGeocoder] = useState<google.maps.Geocoder | null>(null);
   const [searchResults, setSearchResults] = useState<ParkingSpot[]>([]);
+  const [hasSearched, setHasSearched] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
+  const [searchMessage, setSearchMessage] = useState<string | null>(null);
   const [searchError, setSearchError] = useState<string | null>(null);
-  const [autocomplete, setAutocomplete] =
-    useState<google.maps.places.Autocomplete | null>(null);
-  const [searchPlace, setSearchPlace] =
-    useState<google.maps.places.PlaceResult | null>(null);
+
+  const [isReportModalOpen, setIsReportModalOpen] = useState(false);
+  const [selectedSpotId, setSelectedSpotId] = useState<string | null>(null);
+
   const searchInputRef = useRef<HTMLInputElement>(null);
-  const [selectedSpot, setSelectedSpot] = useState<ParkingSpot | null>(null);
-  const [directions, setDirections] =
-    useState<google.maps.DirectionsResult | null>(null);
-  const [directionsService, setDirectionsService] =
-    useState<google.maps.DirectionsService | null>(null);
-  const [directionsRenderer, setDirectionsRenderer] =
-    useState<google.maps.DirectionsRenderer | null>(null);
-
-  // Add click outside handler
-  useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      const target = event.target as Node;
-      const pacContainer = document.querySelector(".pac-container");
-
-      // Don't close if clicking inside the search container or the autocomplete dropdown
-      if (
-        (searchRef.current && searchRef.current.contains(target)) ||
-        (pacContainer && pacContainer.contains(target))
-      ) {
-        return;
-      }
-
-      setShowSearch(false);
-    }
-
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
-    };
-  }, []);
+  const autocompleteRef = useRef<google.maps.places.Autocomplete | null>(null);
 
   const { isLoaded, loadError } = useJsApiLoader({
     id: "google-map-script",
@@ -159,133 +100,195 @@ export default function Map({ apiKey, onLocationUpdate }: MapProps) {
     libraries,
   });
 
-  const onLoad = useCallback((map: google.maps.Map) => {
-    setMap(map);
-    // Initialize geocoder with the map instance
-    const geocoderInstance = new google.maps.Geocoder();
-    setGeocoder(geocoderInstance);
+  const onLoad = useCallback((mapInstance: google.maps.Map) => {
+    setMap(mapInstance);
+    setGeocoder(new google.maps.Geocoder());
   }, []);
 
   const onUnmount = useCallback(() => {
-    if (marker) {
-      marker.setMap(null);
-    }
-    setMarker(null);
     setMap(null);
-  }, [marker]);
+  }, []);
 
-  const getAddressFromCoordinates = async (location: {
-    lat: number;
-    lng: number;
-  }) => {
-    if (!geocoder) {
-      console.error("Geocoder not initialized");
-      return "Address not available";
+  const getAddressFromCoordinates = useCallback(
+    async (location: { lat: number; lng: number }): Promise<string> => {
+      // Primary: Google Geocoding (best quality, requires billing enabled)
+      if (geocoder) {
+        try {
+          const result = await geocoder.geocode({ location, region: "us" });
+          const address = result.results?.[0]?.formatted_address;
+          if (address) return address;
+        } catch (error) {
+          console.warn(
+            "Google reverse geocoding unavailable, using fallback:",
+            error
+          );
+        }
+      }
+
+      // Fallback: OpenStreetMap Nominatim via our API (no billing required)
+      try {
+        const response = await fetch(
+          `/api/geocode/reverse?lat=${location.lat}&lng=${location.lng}`
+        );
+        if (response.ok) {
+          const data = await response.json();
+          if (data.address) return data.address;
+        }
+      } catch (error) {
+        console.error("Fallback reverse geocoding failed:", error);
+      }
+
+      return "";
+    },
+    [geocoder]
+  );
+
+  const locate = useCallback(() => {
+    if (!map) return;
+    if (!navigator.geolocation) {
+      setLocationError("Geolocation is not supported by your browser");
+      return;
     }
+
+    setIsLocating(true);
+    setLocationError(null);
+
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        const location = {
+          lat: position.coords.latitude,
+          lng: position.coords.longitude,
+        };
+        setCurrentLocation(location);
+        map.panTo(location);
+        map.setZoom(DEFAULT_ZOOM);
+        setIsLocating(false);
+
+        // Fall back to raw coordinates if reverse geocoding is unavailable
+        // (e.g. Geocoding API disabled) so flows depending on the address
+        // never get stuck waiting.
+        const address = await getAddressFromCoordinates(location);
+        setCurrentAddress(
+          address ||
+            `Near ${location.lat.toFixed(5)}, ${location.lng.toFixed(5)}`
+        );
+      },
+      (error) => {
+        console.error("Geolocation error:", error);
+        setLocationError(
+          "Couldn't get your location. Check browser permissions."
+        );
+        setIsLocating(false);
+      },
+      { enableHighAccuracy: true, timeout: 8000, maximumAge: 30000 }
+    );
+  }, [map, getAddressFromCoordinates]);
+
+  // Locate the user once the map is ready
+  const didAutoLocate = useRef(false);
+  useEffect(() => {
+    if (isLoaded && map && geocoder && !didAutoLocate.current) {
+      didAutoLocate.current = true;
+      locate();
+    }
+  }, [isLoaded, map, geocoder, locate]);
+
+  // Wire up Places autocomplete whenever the search panel is open
+  useEffect(() => {
+    if (!showSearch || !isLoaded || !searchInputRef.current) return;
+
+    const autocomplete = new google.maps.places.Autocomplete(
+      searchInputRef.current,
+      {
+        componentRestrictions: { country: "us" },
+        fields: ["geometry", "formatted_address", "name"],
+      }
+    );
+
+    autocomplete.addListener("place_changed", () => {
+      const place = autocomplete.getPlace();
+      if (place.geometry?.location) {
+        const location = {
+          lat: place.geometry.location.lat(),
+          lng: place.geometry.location.lng(),
+        };
+        const label = place.formatted_address || place.name || "";
+        setSearchCenter({ ...location, label });
+        setSearchAddress(label);
+        map?.panTo(location);
+        map?.setZoom(DEFAULT_ZOOM);
+      }
+    });
+
+    autocompleteRef.current = autocomplete;
+    return () => {
+      google.maps.event.clearInstanceListeners(autocomplete);
+      autocompleteRef.current = null;
+    };
+  }, [showSearch, isLoaded, map]);
+
+  const runSearch = async (center: { lat: number; lng: number } | null) => {
+    if (!center) {
+      setSearchError(
+        "Enter an address or use your current location to search."
+      );
+      return;
+    }
+
+    setIsSearching(true);
+    setSearchError(null);
+    setSearchMessage(null);
 
     try {
-      const result = await geocoder.geocode({
-        location: location,
-        region: "us", // Add region to improve results
-      });
+      const response = await fetch(
+        `/api/parking/search?lat=${center.lat}&lng=${center.lng}`
+      );
+      const data = await response.json();
 
-      if (result.results && result.results[0]) {
-        // Get the most relevant address components
-        const addressComponents = result.results[0].address_components;
-
-        // Extract address components
-        const streetNumber = addressComponents.find((component) =>
-          component.types.includes("street_number")
-        )?.long_name;
-        const streetName = addressComponents.find((component) =>
-          component.types.includes("route")
-        )?.long_name;
-        const city = addressComponents.find((component) =>
-          component.types.includes("locality")
-        )?.long_name;
-        const state = addressComponents.find((component) =>
-          component.types.includes("administrative_area_level_1")
-        )?.short_name;
-        const postalCode = addressComponents.find((component) =>
-          component.types.includes("postal_code")
-        )?.long_name;
-
-        // Construct a more detailed address
-        const formattedAddress = [
-          streetNumber,
-          streetName,
-          city,
-          state,
-          postalCode,
-        ]
-          .filter(Boolean)
-          .join(", ");
-
-        return formattedAddress || result.results[0].formatted_address;
+      if (!response.ok) {
+        throw new Error(data.message || "Search failed");
       }
-      return "Address not available";
-    } catch (error) {
-      console.error("Error getting address:", error);
-      return "Address not available";
+
+      setSearchResults(data.spots);
+      setHasSearched(true);
+      setSearchMessage(data.message ?? null);
+
+      if (data.spots.length > 0 && map) {
+        const bounds = new google.maps.LatLngBounds();
+        bounds.extend(center);
+        for (const spot of data.spots as ParkingSpot[]) {
+          bounds.extend(spot.coordinates);
+        }
+        map.fitBounds(bounds, 80);
+      }
+    } catch (err) {
+      console.error("Error searching parking spots:", err);
+      setSearchError(
+        err instanceof Error
+          ? err.message
+          : "Failed to search for parking spots. Please try again."
+      );
+    } finally {
+      setIsSearching(false);
     }
   };
 
-  const getCurrentLocation = () => {
-    if (!map || !isLoaded) return;
+  const handleSearch = () => runSearch(searchCenter ?? currentLocation);
 
-    setIsLocating(true);
-    setLocationError("");
-
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        async (position) => {
-          const location = {
-            lat: position.coords.latitude,
-            lng: position.coords.longitude,
-          };
-          setCurrentLocation(location);
-          map.panTo(location);
-          map.setZoom(DEFAULT_ZOOM);
-
-          // Get and set the address
-          const address = await getAddressFromCoordinates(location);
-          setCurrentAddress(address);
-          if (onLocationUpdate) {
-            onLocationUpdate(address, location);
-          }
-
-          // Create or update the marker
-          if (marker) {
-            marker.setMap(null);
-          }
-          const newMarker = new google.maps.Marker({
-            position: location,
-            map: map,
-            icon: {
-              path: google.maps.SymbolPath.CIRCLE,
-              scale: 8,
-              fillColor: "#4285f4",
-              fillOpacity: 1,
-              strokeColor: "#ffffff",
-              strokeWeight: 2,
-            },
-          });
-          setMarker(newMarker);
-        },
-        (error) => {
-          console.error("Error getting location:", error);
-          setLocationError("Unable to get your location");
-        },
-        {
-          enableHighAccuracy: true,
-          timeout: 5000,
-          maximumAge: 0,
-        }
+  /** Clears any typed address and searches around the user's position in one tap. */
+  const searchNearMe = () => {
+    if (!currentLocation) {
+      locate();
+      setSearchError(
+        "Getting your location… tap again once the blue dot appears."
       );
-    } else {
-      setLocationError("Geolocation is not supported by your browser");
+      return;
     }
-    setIsLocating(false);
+    setSearchCenter(null);
+    setSearchAddress("");
+    map?.panTo(currentLocation);
+    map?.setZoom(DEFAULT_ZOOM);
+    void runSearch(currentLocation);
   };
 
   const handleReportSubmit = async (data: {
@@ -294,526 +297,300 @@ export default function Map({ apiKey, onLocationUpdate }: MapProps) {
     address: string;
     coordinates: { lat: number; lng: number };
   }) => {
-    try {
-      console.log("Sending report to API:", data);
-
-      const response = await fetch("/api/parking/report", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(data),
-      });
-
-      const responseData = await response.json();
-      console.log("API Response:", responseData);
-
-      if (!response.ok) {
-        throw new Error(responseData.message || "Failed to submit report");
-      }
-    } catch (err) {
-      console.error("Error reporting parking:", err);
-      throw err;
+    const response = await fetch("/api/parking/report", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    });
+    const responseData = await response.json();
+    if (!response.ok) {
+      throw new Error(responseData.message || "Failed to submit report");
     }
   };
 
-  const handleSearch = async () => {
-    if (!currentLocation) {
-      setSearchError("Please get your current location first");
-      return;
-    }
-
-    setIsSearching(true);
-    setSearchError(null);
-
-    try {
-      const response = await fetch(
-        `/api/parking/search?lat=${currentLocation.lat}&lng=${currentLocation.lng}`
-      );
-
-      if (!response.ok) {
-        throw new Error("Failed to search for parking spots");
-      }
-
-      const data = await response.json();
-      setSearchResults(data.spots);
-
-      // Display the message from the API
-      if (data.message) {
-        setSearchError(data.message);
-      }
-    } catch (err) {
-      console.error("Error searching parking spots:", err);
-      setSearchError("Failed to search for parking spots. Please try again.");
-    } finally {
-      setIsSearching(false);
-    }
-  };
-
-  // Update the useEffect for initial location
-  useEffect(() => {
-    if (isLoaded && map && !currentLocation) {
-      // Try to get user's location on initial load
-      if (navigator.geolocation) {
-        navigator.geolocation.getCurrentPosition(
-          async (position) => {
-            const location = {
-              lat: position.coords.latitude,
-              lng: position.coords.longitude,
-            };
-            setCurrentLocation(location);
-            map.panTo(location);
-            map.setZoom(DEFAULT_ZOOM);
-
-            // Get address from coordinates
-            const address = await getAddressFromCoordinates(location);
-            setCurrentAddress(address);
-            onLocationUpdate?.(address, location);
-
-            // Create marker with address as title
-            const newMarker = new google.maps.Marker({
-              map,
-              position: location,
-              title: address || "Location not available",
-              animation: google.maps.Animation.DROP,
-            });
-            setMarker(newMarker);
-          },
-          (error) => {
-            console.error("Error getting initial location:", error);
-            // If we can't get location, center on default location
-            map.panTo(defaultCenter);
-            map.setZoom(DEFAULT_ZOOM);
-          }
-        );
-      } else {
-        // If geolocation is not supported, center on default location
-        map.panTo(defaultCenter);
-        map.setZoom(DEFAULT_ZOOM);
-      }
-    }
-  }, [isLoaded, map, currentLocation, onLocationUpdate]);
-
-  // Add function to handle place selection
-  const onPlaceSelected = (place: google.maps.places.PlaceResult) => {
-    if (place.geometry && place.geometry.location) {
-      const location = {
-        lat: place.geometry.location.lat(),
-        lng: place.geometry.location.lng(),
-      };
-      setCurrentLocation(location);
-      map?.panTo(location);
-      map?.setZoom(DEFAULT_ZOOM);
-
-      // Update marker
-      if (marker) {
-        marker.setMap(null);
-      }
-      const newMarker = new google.maps.Marker({
-        map: map!,
-        position: location,
-        title: place.name || "Selected Location",
-        animation: google.maps.Animation.DROP,
-      });
-      setMarker(newMarker);
-
-      // Set the address
-      setCurrentAddress(place.formatted_address || "");
-      setSearchAddress(place.formatted_address || "");
-    }
-  };
-
-  // Add effect to initialize autocomplete
-  useEffect(() => {
-    if (searchInputRef.current && !autocomplete) {
-      const autocompleteInstance = new google.maps.places.Autocomplete(
-        searchInputRef.current,
-        {
-          componentRestrictions: { country: "us" },
-          fields: ["geometry", "name", "formatted_address"],
-        }
-      );
-
-      // Add click event listener to the autocomplete dropdown
-      const pacContainer = document.querySelector(
-        ".pac-container"
-      ) as HTMLElement;
-      if (pacContainer) {
-        pacContainer.addEventListener("click", (e) => {
-          e.stopPropagation();
-        });
-      }
-
-      autocompleteInstance.addListener("place_changed", () => {
-        const place = autocompleteInstance.getPlace();
-        if (place) {
-          onPlaceSelected(place);
-        }
-      });
-
-      // Add listener for when the autocomplete dropdown is shown
-      google.maps.event.addListener(
-        autocompleteInstance,
-        "place_changed",
-        () => {
-          const pacContainer = document.querySelector(
-            ".pac-container"
-          ) as HTMLElement;
-          if (pacContainer) {
-            pacContainer.addEventListener("click", (e) => {
-              e.stopPropagation();
-            });
-          }
-        }
-      );
-
-      setAutocomplete(autocompleteInstance);
-    }
-  }, [searchInputRef.current, autocomplete]);
-
-  // Initialize directions service and renderer
-  useEffect(() => {
-    if (isLoaded && map) {
-      const service = new google.maps.DirectionsService();
-      const renderer = new google.maps.DirectionsRenderer({
-        map,
-        suppressMarkers: true,
-        polylineOptions: {
-          strokeColor: "#4F46E5", // Indigo color
-          strokeWeight: 4,
-        },
-      });
-      setDirectionsService(service);
-      setDirectionsRenderer(renderer);
-    }
-  }, [isLoaded, map]);
-
-  // Function to get directions
-  const getDirections = async (destination: { lat: number; lng: number }) => {
-    if (!directionsService || !currentLocation) return;
-
-    try {
-      const result = await directionsService.route({
-        origin: new google.maps.LatLng(
-          currentLocation.lat,
-          currentLocation.lng
-        ),
-        destination: new google.maps.LatLng(destination.lat, destination.lng),
-        travelMode: google.maps.TravelMode.DRIVING,
-      });
-
-      setDirections(result);
-      if (directionsRenderer) {
-        directionsRenderer.setMap(map);
-        directionsRenderer.setDirections(result);
-      }
-    } catch (error) {
-      console.error("Error getting directions:", error);
-    }
-  };
-
-  // Function to handle spot selection
-  const handleSpotSelect = (spot: ParkingSpot) => {
-    setSelectedSpot(spot);
-
-    // Create Google Maps directions URL
-    const origin = `${currentLocation?.lat},${currentLocation?.lng}`;
+  const openDirections = (spot: ParkingSpot) => {
+    setSelectedSpotId(spot.id);
     const destination = `${spot.coordinates.lat},${spot.coordinates.lng}`;
-    const mapsUrl = `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${destination}&travelmode=driving`;
-
-    // Open in new tab
-    window.open(mapsUrl, "_blank");
+    const origin = currentLocation
+      ? `&origin=${currentLocation.lat},${currentLocation.lng}`
+      : "";
+    window.open(
+      `https://www.google.com/maps/dir/?api=1${origin}&destination=${destination}&travelmode=driving`,
+      "_blank",
+      "noopener,noreferrer"
+    );
   };
 
   if (loadError) {
     return (
-      <div className="bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 p-4 rounded-lg">
-        <h3 className="font-semibold mb-2">Error Loading Google Maps</h3>
-        <p className="text-sm">
-          There was an error loading Google Maps. This could be due to:
-        </p>
-        <ul className="list-disc list-inside text-sm mt-2">
-          <li>Invalid API key</li>
-          <li>API key restrictions</li>
-          <li>Missing enabled APIs in Google Cloud Console</li>
-        </ul>
-        <p className="text-sm mt-2">
-          Please check the JavaScript console for technical details.
-        </p>
+      <div className="flex h-full items-center justify-center p-6">
+        <div className="card-surface max-w-md p-8">
+          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-red-100 text-red-600 dark:bg-red-950/50 dark:text-red-400">
+            <AlertCircle className="h-6 w-6" />
+          </div>
+          <h3 className="mt-4 font-display text-lg font-semibold text-ink-900 dark:text-white">
+            Couldn&apos;t load Google Maps
+          </h3>
+          <p className="mt-2 text-sm text-ink-500 dark:text-ink-400">
+            This is usually an invalid API key, key restrictions, or a missing
+            API enablement in the Google Cloud Console. Check the browser
+            console for details.
+          </p>
+        </div>
       </div>
     );
   }
 
-  if (!isLoaded)
+  if (!isLoaded) {
     return (
-      <div className="flex items-center justify-center h-[500px] bg-gray-50 dark:bg-gray-800 rounded-lg">
-        <div className="flex items-center gap-2">
-          <svg
-            className="animate-spin h-5 w-5 text-indigo-600"
-            viewBox="0 0 24 24"
-          >
-            <circle
-              className="opacity-25"
-              cx="12"
-              cy="12"
-              r="10"
-              stroke="currentColor"
-              strokeWidth="4"
-              fill="none"
-            />
-            <path
-              className="opacity-75"
-              fill="currentColor"
-              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-            />
-          </svg>
-          <span>Loading Google Maps...</span>
+      <div className="flex h-full items-center justify-center">
+        <div className="flex items-center gap-3 text-ink-500 dark:text-ink-400">
+          <Loader2 className="h-5 w-5 animate-spin text-brand-500" />
+          <span className="text-sm font-medium">Loading map…</span>
         </div>
       </div>
     );
+  }
 
   return (
-    <div className="relative w-full h-[600px]">
+    <div className="relative h-full w-full">
       <GoogleMap
-        mapContainerClassName="w-full h-full rounded-lg"
+        mapContainerClassName="h-full w-full"
         center={currentLocation || defaultCenter}
         zoom={DEFAULT_ZOOM}
         onLoad={onLoad}
         onUnmount={onUnmount}
+        options={{
+          styles: MAP_STYLE,
+          disableDefaultUI: true,
+          zoomControl: true,
+          zoomControlOptions: {
+            position: google.maps.ControlPosition.RIGHT_CENTER,
+          },
+          clickableIcons: false,
+        }}
       >
         {currentLocation && (
           <Marker
             position={currentLocation}
-            title={currentAddress || "Location not available"}
-          />
-        )}
-        {selectedSpot && (
-          <Marker
-            position={selectedSpot.coordinates}
-            title={selectedSpot.address}
+            title={currentAddress || "Your location"}
             icon={{
               path: google.maps.SymbolPath.CIRCLE,
               scale: 8,
-              fillColor: "#4F46E5",
+              fillColor: "#3b82f6",
               fillOpacity: 1,
-              strokeColor: "#FFFFFF",
-              strokeWeight: 2,
+              strokeColor: "#ffffff",
+              strokeWeight: 3,
             }}
+            zIndex={10}
           />
         )}
-        {directions && (
-          <DirectionsRenderer
-            directions={directions}
-            options={{
-              suppressMarkers: true,
-              polylineOptions: {
-                strokeColor: "#4F46E5",
-                strokeWeight: 4,
-              },
-            }}
-          />
+        {searchCenter && (
+          <Marker position={searchCenter} title={searchCenter.label} />
         )}
+        {searchResults.map((spot) => (
+          <Marker
+            key={spot.id}
+            position={spot.coordinates}
+            title={`${spot.spots} spot${spot.spots !== 1 ? "s" : ""} · ${spot.address}`}
+            label={{
+              text: String(spot.spots),
+              color: "#022c22",
+              fontWeight: "700",
+              fontSize: "12px",
+            }}
+            icon={{
+              path: google.maps.SymbolPath.CIRCLE,
+              scale: selectedSpotId === spot.id ? 14 : 12,
+              fillColor: "#10b981",
+              fillOpacity: 1,
+              strokeColor: "#ffffff",
+              strokeWeight: 2.5,
+            }}
+            onClick={() => setSelectedSpotId(spot.id)}
+          />
+        ))}
       </GoogleMap>
 
-      {/* Top button */}
-      <div className="absolute top-2 left-2">
+      {/* Locate button */}
+      <div className="absolute right-4 top-4 flex flex-col items-end gap-2">
         <button
-          onClick={getCurrentLocation}
+          onClick={locate}
           disabled={isLocating}
-          className="bg-white dark:bg-gray-800 text-gray-900 dark:text-white px-3 py-1.5 rounded-lg shadow-md hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 text-sm"
+          className="flex h-11 w-11 items-center justify-center rounded-xl bg-white text-ink-700 shadow-float transition-colors hover:bg-ink-50 disabled:opacity-60 dark:bg-ink-900 dark:text-ink-200 dark:hover:bg-ink-800"
+          title="Use my location"
+          aria-label="Use my location"
         >
           {isLocating ? (
-            <>
-              <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
-                <circle
-                  className="opacity-25"
-                  cx="12"
-                  cy="12"
-                  r="10"
-                  stroke="currentColor"
-                  strokeWidth="4"
-                  fill="none"
-                />
-                <path
-                  className="opacity-75"
-                  fill="currentColor"
-                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                />
-              </svg>
-              Getting Location...
-            </>
+            <Loader2 className="h-5 w-5 animate-spin" />
           ) : (
-            <>
-              <svg
-                className="w-4 h-4"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"
-                />
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"
-                />
-              </svg>
-              Use My Location
-            </>
+            <Crosshair className="h-5 w-5" />
           )}
         </button>
+        {locationError && (
+          <div className="flex max-w-xs items-start gap-2 rounded-xl bg-white px-3.5 py-2.5 text-xs font-medium text-red-600 shadow-float dark:bg-ink-900 dark:text-red-400">
+            <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            {locationError}
+          </div>
+        )}
       </div>
 
-      {locationError && (
-        <div className="absolute top-2 right-2 bg-red-100 dark:bg-red-900 text-red-700 dark:text-red-100 px-3 py-1.5 rounded-lg shadow-md text-sm">
-          {locationError}
-        </div>
-      )}
-
-      {/* Bottom buttons */}
-      <div className="absolute bottom-2 left-1/2 transform -translate-x-1/2 flex space-x-2">
+      {/* Primary actions */}
+      <div className="absolute bottom-6 left-1/2 z-10 flex -translate-x-1/2 items-center gap-3">
         <button
-          onClick={() => setShowSearch(!showSearch)}
-          className="bg-white dark:bg-gray-800 text-gray-900 dark:text-white px-4 py-2 rounded-lg shadow-md hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2 text-sm"
+          onClick={() => setShowSearch((v) => !v)}
+          className={`inline-flex items-center gap-2 rounded-full px-5 py-3 text-sm font-semibold shadow-float transition-all ${
+            showSearch
+              ? "bg-ink-900 text-white dark:bg-white dark:text-ink-950"
+              : "bg-white text-ink-800 hover:bg-ink-50 dark:bg-ink-900 dark:text-white dark:hover:bg-ink-800"
+          }`}
         >
-          <svg
-            className="w-5 h-5"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
-            />
-          </svg>
-          Find Parking
+          <Search className="h-4 w-4" />
+          Find parking
         </button>
-
         <button
           onClick={() => setIsReportModalOpen(true)}
-          className="bg-white dark:bg-gray-800 text-gray-900 dark:text-white px-4 py-2 rounded-lg shadow-md hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2 text-sm"
+          className="inline-flex items-center gap-2 rounded-full bg-brand-500 px-5 py-3 text-sm font-semibold text-ink-950 shadow-float transition-all hover:bg-brand-400 hover:shadow-glow"
         >
-          <svg
-            className="w-5 h-5"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M12 6v6m0 0v6m0-6h6m-6 0H6"
-            />
-          </svg>
-          Report Parking
+          <Plus className="h-4 w-4" />
+          Report a spot
         </button>
       </div>
 
+      {/* Search panel */}
       {showSearch && (
-        <div
-          ref={searchRef}
-          className="absolute top-12 left-2 bg-white dark:bg-gray-800 p-3 rounded-lg shadow-lg w-72 z-50 max-h-[400px] overflow-y-auto"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <div className="space-y-4">
-            <div>
-              <label
-                htmlFor="address"
-                className="block text-sm font-medium text-gray-700 dark:text-gray-300"
-              >
-                Enter Address
-              </label>
+        <div className="absolute left-4 top-4 z-10 flex max-h-[calc(100%-7rem)] w-[22rem] max-w-[calc(100%-5.5rem)] animate-scale-in flex-col overflow-hidden rounded-2xl bg-white shadow-float dark:bg-ink-900">
+          <div className="flex items-center justify-between border-b border-ink-100 px-5 py-4 dark:border-ink-800">
+            <h2 className="font-display text-base font-semibold text-ink-900 dark:text-white">
+              Find parking
+            </h2>
+            <button
+              onClick={() => setShowSearch(false)}
+              className="rounded-lg p-1 text-ink-400 transition-colors hover:bg-ink-100 hover:text-ink-700 dark:hover:bg-ink-800 dark:hover:text-ink-200"
+              aria-label="Close search"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+
+          <div className="space-y-3 px-5 py-4">
+            <div className="relative">
+              <MapPin className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-400" />
               <input
                 ref={searchInputRef}
                 type="text"
-                id="address"
-                className="mt-1 block w-full border border-gray-300 dark:border-gray-600 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm dark:bg-gray-700 dark:text-white"
-                placeholder="Enter an address"
+                className="input-field pl-10"
+                placeholder="Search near an address…"
                 value={searchAddress}
                 onChange={(e) => setSearchAddress(e.target.value)}
                 autoComplete="off"
-                onClick={(e) => e.stopPropagation()}
               />
             </div>
-            <div className="flex space-x-2">
+
+            <p className="text-xs text-ink-500 dark:text-ink-400">
+              {searchCenter
+                ? `Searching near ${searchCenter.label}`
+                : currentLocation
+                  ? "Searching near your current location"
+                  : "Waiting for your location…"}
+            </p>
+
+            <div className="space-y-2">
               <button
                 onClick={handleSearch}
-                disabled={isSearching || !currentLocation}
-                className="flex-1 bg-indigo-600 text-white px-4 py-2 rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                disabled={isSearching || (!searchCenter && !currentLocation)}
+                className="btn-primary w-full py-2.5"
               >
-                {isSearching ? "Searching..." : "Search"}
+                {isSearching ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Searching…
+                  </>
+                ) : (
+                  <>
+                    <Search className="h-4 w-4" />
+                    Search
+                  </>
+                )}
               </button>
               <button
-                onClick={getCurrentLocation}
-                className="flex-1 bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-white px-4 py-2 rounded-md hover:bg-gray-200 dark:hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500"
+                onClick={searchNearMe}
+                disabled={isSearching}
+                className="btn-secondary w-full py-2.5"
               >
-                Use Current Location
+                <Crosshair className="h-4 w-4" />
+                Search near my location
               </button>
             </div>
 
             {searchError && (
-              <p className="text-red-600 dark:text-red-400 text-sm">
+              <div className="flex items-start gap-2 rounded-xl bg-red-50 px-3.5 py-2.5 text-xs font-medium text-red-700 dark:bg-red-950/40 dark:text-red-400">
+                <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                 {searchError}
-              </p>
+              </div>
             )}
+          </div>
 
-            {searchResults.length > 0 && (
-              <div className="mt-4 space-y-2">
-                <h3 className="text-sm font-medium text-gray-900 dark:text-white">
-                  Found {searchResults.length} parking spots nearby
-                </h3>
-                <div className="max-h-60 overflow-y-auto space-y-2">
+          {hasSearched && !searchError && (
+            <div className="slim-scroll flex-1 overflow-y-auto border-t border-ink-100 dark:border-ink-800">
+              {searchResults.length === 0 ? (
+                <div className="px-5 py-8 text-center">
+                  <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-full bg-ink-100 text-ink-400 dark:bg-ink-800">
+                    <Search className="h-5 w-5" />
+                  </div>
+                  <p className="mt-3 text-sm font-medium text-ink-700 dark:text-ink-200">
+                    No spots in the last hour
+                  </p>
+                  <p className="mt-1 text-xs leading-relaxed text-ink-500 dark:text-ink-400">
+                    {searchMessage}
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-2.5 px-4 py-4">
+                  <p className="px-1 text-xs font-semibold uppercase tracking-wide text-ink-400">
+                    {searchResults.length} spot
+                    {searchResults.length !== 1 ? "s" : ""} reported in the last
+                    hour
+                  </p>
                   {searchResults.map((spot) => (
                     <div
                       key={spot.id}
-                      className="p-2 bg-gray-50 dark:bg-gray-700 rounded-md text-sm"
+                      className={`rounded-xl border p-3.5 transition-colors ${
+                        selectedSpotId === spot.id
+                          ? "border-brand-500/60 bg-brand-500/5"
+                          : "border-ink-100 hover:border-ink-200 dark:border-ink-800 dark:hover:border-ink-700"
+                      }`}
                     >
-                      <p className="font-medium text-gray-900 dark:text-white">
-                        {spot.address}
-                      </p>
-                      <p className="text-gray-600 dark:text-gray-300">
-                        {spot.spots} spot{spot.spots !== 1 ? "s" : ""} available
-                      </p>
-                      <p className="text-gray-500 dark:text-gray-400">
-                        {spot.distance.toFixed(1)} miles away
-                      </p>
-                      <p className="text-gray-500 dark:text-gray-400 text-xs">
-                        Last reported {formatTimeAgo(spot.timestamp)}
+                      <div className="flex items-start justify-between gap-2">
+                        <p className="text-sm font-semibold leading-snug text-ink-900 dark:text-white">
+                          {spot.address}
+                        </p>
+                        <span
+                          className={`inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold ${freshnessClasses(spot.timestamp)}`}
+                        >
+                          <Clock className="h-3 w-3" />
+                          {formatTimeAgo(spot.timestamp)}
+                        </span>
+                      </div>
+                      <p className="mt-1 text-xs text-ink-500 dark:text-ink-400">
+                        {spot.spots} spot{spot.spots !== 1 ? "s" : ""} ·{" "}
+                        {spot.distance < 0.05
+                          ? "right here"
+                          : `${spot.distance.toFixed(1)} mi away`}
                       </p>
                       <button
-                        onClick={() => handleSpotSelect(spot)}
-                        className="mt-2 w-full bg-indigo-600 text-white px-3 py-1.5 rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 text-sm flex items-center justify-center gap-2"
+                        onClick={() => openDirections(spot)}
+                        className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-ink-900 py-2 text-xs font-semibold text-white transition-colors hover:bg-ink-800 dark:bg-white dark:text-ink-950 dark:hover:bg-ink-100"
                       >
-                        <svg
-                          className="w-4 h-4"
-                          fill="none"
-                          stroke="currentColor"
-                          viewBox="0 0 24 24"
-                        >
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            strokeWidth={2}
-                            d="M13 7l5 5m0 0l-5 5m5-5H6"
-                          />
-                        </svg>
-                        Get Directions
+                        <Navigation className="h-3.5 w-3.5" />
+                        Get directions
                       </button>
                     </div>
                   ))}
                 </div>
-              </div>
-            )}
-          </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 

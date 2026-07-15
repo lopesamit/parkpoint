@@ -1,7 +1,18 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import {
+  AlertCircle,
+  Crosshair,
+  Loader2,
+  MapPin,
+  Minus,
+  Plus,
+  X,
+} from "lucide-react";
 import SuccessModal from "./SuccessModal";
+
+const MAX_SPOTS = 50;
 
 interface ReportParkingModalProps {
   isOpen: boolean;
@@ -16,6 +27,8 @@ interface ReportParkingModalProps {
   }) => Promise<void>;
 }
 
+const stepLabels = ["Location", "Address", "Spots"];
+
 export default function ReportParkingModal({
   isOpen,
   onClose,
@@ -25,144 +38,94 @@ export default function ReportParkingModal({
 }: ReportParkingModalProps) {
   const [step, setStep] = useState(1);
   const [location, setLocation] = useState<"current" | "other" | null>(null);
-  const [spots, setSpots] = useState("");
+  const [spots, setSpots] = useState(1);
   const [address, setAddress] = useState("");
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [isAddressLoading, setIsAddressLoading] = useState(false);
-  const [autocomplete, setAutocomplete] =
-    useState<google.maps.places.Autocomplete | null>(null);
-  const [selectedPlace, setSelectedPlace] =
-    useState<google.maps.places.PlaceResult | null>(null);
   const [selectedCoordinates, setSelectedCoordinates] = useState<{
     lat: number;
     lng: number;
   } | null>(null);
-  const addressInputRef = useRef<HTMLInputElement>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [showSuccess, setShowSuccess] = useState(false);
 
-  // Reset form when modal opens
+  const addressInputRef = useRef<HTMLInputElement>(null);
+
+  // Reset the flow every time the modal opens
   useEffect(() => {
     if (isOpen) {
       setStep(1);
       setLocation(null);
-      setSpots("");
+      setSpots(1);
       setAddress("");
+      setSelectedCoordinates(null);
       setError(null);
-      setIsAddressLoading(false);
     }
   }, [isOpen]);
 
-  // Initialize Google Places Autocomplete
+  // Close on Escape
   useEffect(() => {
-    if (addressInputRef.current && !autocomplete) {
-      // Ensure the Google Maps API is loaded
-      if (typeof google !== "undefined" && google.maps && google.maps.places) {
-        const autocompleteInstance = new google.maps.places.Autocomplete(
-          addressInputRef.current,
-          {
-            componentRestrictions: { country: "us" },
-            fields: ["geometry", "name", "formatted_address"],
-          }
-        );
-
-        // Add click event listener to prevent modal from closing when selecting an address
-        const pacContainer = document.querySelector(
-          ".pac-container"
-        ) as HTMLElement;
-        if (pacContainer) {
-          pacContainer.addEventListener("click", (e) => {
-            e.stopPropagation();
-          });
-        }
-
-        autocompleteInstance.addListener("place_changed", () => {
-          const place = autocompleteInstance.getPlace();
-          if (place.geometry && place.geometry.location) {
-            setAddress(place.formatted_address || "");
-            setSelectedCoordinates({
-              lat: place.geometry.location.lat(),
-              lng: place.geometry.location.lng(),
-            });
-          }
-        });
-
-        setAutocomplete(autocompleteInstance);
-      }
-    }
-
-    // Cleanup function
-    return () => {
-      if (autocomplete) {
-        google.maps.event.clearInstanceListeners(autocomplete);
-        setAutocomplete(null);
-      }
+    if (!isOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
     };
-  }, [addressInputRef.current, autocomplete]);
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [isOpen, onClose]);
 
-  const handleLocationSelect = (selectedLocation: "current" | "other") => {
-    if (selectedLocation === "current") {
-      if (!currentLocation) {
-        setError(
-          "Please get your current location first by clicking 'Use My Location' on the map"
-        );
-        return;
+  // Attach Places autocomplete when the address step for "other" is visible
+  useEffect(() => {
+    if (!isOpen || step !== 2 || location !== "other") return;
+    const input = addressInputRef.current;
+    if (!input || typeof google === "undefined" || !google.maps?.places) return;
+
+    const autocomplete = new google.maps.places.Autocomplete(input, {
+      componentRestrictions: { country: "us" },
+      fields: ["geometry", "formatted_address"],
+    });
+
+    autocomplete.addListener("place_changed", () => {
+      const place = autocomplete.getPlace();
+      if (place.geometry?.location) {
+        setAddress(place.formatted_address || "");
+        setSelectedCoordinates({
+          lat: place.geometry.location.lat(),
+          lng: place.geometry.location.lng(),
+        });
       }
-      if (!currentAddress) {
-        setError("Please wait while we fetch your address...");
-        setIsAddressLoading(true);
-        return;
-      }
+    });
+
+    return () => {
+      google.maps.event.clearInstanceListeners(autocomplete);
+    };
+  }, [isOpen, step, location]);
+
+  const handleLocationSelect = (selected: "current" | "other") => {
+    setError(null);
+    if (selected === "current" && !currentLocation) {
+      setError(
+        "We don't have your location yet. Tap the locate button on the map first."
+      );
+      return;
     }
-    setLocation(selectedLocation);
+    setLocation(selected);
     setStep(2);
-  };
-
-  const onPlaceSelected = (place: google.maps.places.PlaceResult) => {
-    if (place.geometry && place.geometry.location) {
-      setAddress(place.formatted_address || "");
-      setSelectedPlace(place);
-      setSelectedCoordinates({
-        lat: place.geometry.location.lat(),
-        lng: place.geometry.location.lng(),
-      });
-    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
 
-    if (!location) {
-      setError("Please select a location type (current or other)");
-      return;
-    }
-
-    if (location === "current" && !currentLocation) {
-      setError(
-        "Please get your current location first by clicking 'Use My Location' on the map"
-      );
-      return;
-    }
-
+    if (!location) return;
     if (location === "other" && (!address || !selectedCoordinates)) {
-      setError(
-        "Please enter and select a valid address for the parking location"
-      );
-      return;
-    }
-
-    if (!spots || parseInt(spots) < 1) {
-      setError("Please enter a valid number of spots");
+      setError("Please select an address from the suggestions.");
       return;
     }
 
     setIsSubmitting(true);
-
     try {
       await onReportSubmit({
         location,
-        spots: parseInt(spots),
+        spots,
         address: location === "current" ? currentAddress : address,
         coordinates:
           location === "current" ? currentLocation! : selectedCoordinates!,
@@ -184,291 +147,245 @@ export default function ReportParkingModal({
 
   return (
     <>
-      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-        <div className="bg-white dark:bg-gray-800 rounded-lg p-6 w-full max-w-md">
-          <div className="flex justify-between items-center mb-4">
-            <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
-              Report Available Parking
-            </h2>
+      <div
+        className="fixed inset-0 z-50 flex items-center justify-center bg-ink-950/60 p-4 backdrop-blur-sm"
+        onClick={onClose}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="report-modal-title"
+      >
+        <div
+          className="w-full max-w-md animate-scale-in rounded-2xl bg-white p-6 shadow-float dark:bg-ink-900"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="flex items-start justify-between">
+            <div>
+              <h2
+                id="report-modal-title"
+                className="font-display text-xl font-bold text-ink-900 dark:text-white"
+              >
+                Report parking
+              </h2>
+              <p className="mt-1 text-sm text-ink-500 dark:text-ink-400">
+                Help a neighbor park in seconds.
+              </p>
+            </div>
             <button
               onClick={onClose}
-              className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+              className="rounded-lg p-1.5 text-ink-400 transition-colors hover:bg-ink-100 hover:text-ink-700 dark:hover:bg-ink-800 dark:hover:text-ink-200"
+              aria-label="Close"
             >
-              <svg
-                className="w-6 h-6"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M6 18L18 6M6 6l12 12"
-                />
-              </svg>
+              <X className="h-5 w-5" />
             </button>
           </div>
 
-          <form onSubmit={handleSubmit} className="space-y-4">
+          {/* Step indicator */}
+          <div className="mt-5 flex items-center gap-2">
+            {stepLabels.map((label, i) => (
+              <div key={label} className="flex flex-1 flex-col gap-1.5">
+                <div
+                  className={`h-1 rounded-full transition-colors ${
+                    step > i ? "bg-brand-500" : "bg-ink-200 dark:bg-ink-700"
+                  }`}
+                />
+                <span
+                  className={`text-[11px] font-semibold uppercase tracking-wide ${
+                    step > i
+                      ? "text-brand-600 dark:text-brand-400"
+                      : "text-ink-400 dark:text-ink-500"
+                  }`}
+                >
+                  {label}
+                </span>
+              </div>
+            ))}
+          </div>
+
+          <form onSubmit={handleSubmit} className="mt-6">
             {step === 1 && (
               <div className="space-y-4">
-                <p className="text-gray-600 dark:text-gray-300">
-                  Where are the parking spots located?
+                <p className="text-sm font-medium text-ink-700 dark:text-ink-300">
+                  Where are the open spots?
                 </p>
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-2 gap-3">
                   <button
                     type="button"
                     onClick={() => handleLocationSelect("current")}
-                    disabled={!currentLocation || isAddressLoading}
-                    className={`p-4 rounded-lg border-2 ${
-                      location === "current"
-                        ? "border-indigo-500 bg-indigo-50 dark:bg-indigo-900/20"
-                        : "border-gray-200 dark:border-gray-700 hover:border-indigo-500"
-                    } ${
-                      !currentLocation || isAddressLoading
-                        ? "opacity-50 cursor-not-allowed"
-                        : ""
-                    }`}
+                    disabled={!currentLocation}
+                    className="group flex flex-col items-center gap-2.5 rounded-xl border-2 border-ink-200 p-5 transition-all hover:border-brand-500 hover:bg-brand-500/5 disabled:cursor-not-allowed disabled:opacity-50 dark:border-ink-700 dark:hover:border-brand-500"
                   >
-                    <div className="flex flex-col items-center space-y-2">
-                      {isAddressLoading ? (
-                        <svg
-                          className="animate-spin h-6 w-6 text-indigo-500"
-                          viewBox="0 0 24 24"
-                        >
-                          <circle
-                            className="opacity-25"
-                            cx="12"
-                            cy="12"
-                            r="10"
-                            stroke="currentColor"
-                            strokeWidth="4"
-                            fill="none"
-                          />
-                          <path
-                            className="opacity-75"
-                            fill="currentColor"
-                            d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                          />
-                        </svg>
-                      ) : (
-                        <svg
-                          className="w-6 h-6 text-indigo-500"
-                          fill="none"
-                          stroke="currentColor"
-                          viewBox="0 0 24 24"
-                        >
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            strokeWidth={2}
-                            d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"
-                          />
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            strokeWidth={2}
-                            d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"
-                          />
-                        </svg>
-                      )}
-                      <span className="text-sm font-medium">
-                        {isAddressLoading ? "Loading..." : "Current Location"}
-                      </span>
+                    <div className="flex h-11 w-11 items-center justify-center rounded-full bg-brand-500/15 text-brand-600 transition-colors group-hover:bg-brand-500 group-hover:text-ink-950 dark:text-brand-400">
+                      <Crosshair className="h-5 w-5" />
                     </div>
+                    <span className="text-sm font-semibold text-ink-800 dark:text-ink-200">
+                      Where I am
+                    </span>
                   </button>
 
                   <button
                     type="button"
-                    onClick={() => {
-                      setLocation("other");
-                      setStep(2);
-                    }}
-                    className={`p-4 rounded-lg border-2 ${
-                      location === "other"
-                        ? "border-indigo-500 bg-indigo-50 dark:bg-indigo-900/20"
-                        : "border-gray-200 dark:border-gray-700 hover:border-indigo-500"
-                    }`}
+                    onClick={() => handleLocationSelect("other")}
+                    className="group flex flex-col items-center gap-2.5 rounded-xl border-2 border-ink-200 p-5 transition-all hover:border-brand-500 hover:bg-brand-500/5 dark:border-ink-700 dark:hover:border-brand-500"
                   >
-                    <div className="flex flex-col items-center space-y-2">
-                      <svg
-                        className="w-6 h-6 text-indigo-500"
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"
-                        />
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"
-                        />
-                      </svg>
-                      <span className="text-sm font-medium">
-                        Other Location
-                      </span>
+                    <div className="flex h-11 w-11 items-center justify-center rounded-full bg-brand-500/15 text-brand-600 transition-colors group-hover:bg-brand-500 group-hover:text-ink-950 dark:text-brand-400">
+                      <MapPin className="h-5 w-5" />
                     </div>
+                    <span className="text-sm font-semibold text-ink-800 dark:text-ink-200">
+                      Somewhere else
+                    </span>
                   </button>
                 </div>
               </div>
             )}
 
             {step === 2 && (
-              <div className="space-y-4">
+              <div className="space-y-5">
                 {location === "current" ? (
-                  <>
-                    <div className="bg-gray-50 dark:bg-gray-700 p-4 rounded-lg">
-                      <h3 className="text-sm font-medium text-gray-900 dark:text-white mb-2">
-                        Confirm Your Location
-                      </h3>
-                      {isAddressLoading ? (
-                        <div className="flex items-center space-x-2">
-                          <svg
-                            className="animate-spin h-4 w-4 text-indigo-500"
-                            viewBox="0 0 24 24"
-                          >
-                            <circle
-                              className="opacity-25"
-                              cx="12"
-                              cy="12"
-                              r="10"
-                              stroke="currentColor"
-                              strokeWidth="4"
-                              fill="none"
-                            />
-                            <path
-                              className="opacity-75"
-                              fill="currentColor"
-                              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                            />
-                          </svg>
-                          <span className="text-sm text-gray-600 dark:text-gray-300">
-                            Loading address...
-                          </span>
-                        </div>
-                      ) : (
-                        <p className="text-sm text-gray-600 dark:text-gray-300">
-                          {currentAddress}
-                        </p>
-                      )}
+                  <div className="rounded-xl border border-ink-200 bg-ink-50 p-4 dark:border-ink-700 dark:bg-ink-800/60">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-ink-400">
+                      Reporting at
+                    </p>
+                    <div className="mt-2 flex items-start gap-2.5">
+                      <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-brand-500" />
+                      <p className="text-sm font-medium text-ink-800 dark:text-ink-200">
+                        {currentAddress || "Resolving your address…"}
+                      </p>
                     </div>
-                    <div className="flex justify-between">
-                      <button
-                        type="button"
-                        onClick={() => setStep(1)}
-                        className="text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 dark:hover:text-indigo-300"
-                      >
-                        Back
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setStep(3)}
-                        disabled={isAddressLoading}
-                        className="bg-indigo-600 text-white px-4 py-2 rounded-md hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        Confirm Location
-                      </button>
-                    </div>
-                  </>
+                  </div>
                 ) : (
-                  <>
-                    <div>
-                      <label
-                        htmlFor="address"
-                        className="block text-sm font-medium text-gray-700 dark:text-gray-300"
-                      >
-                        Enter Address
-                      </label>
+                  <div>
+                    <label
+                      htmlFor="report-address"
+                      className="mb-1.5 block text-sm font-medium text-ink-700 dark:text-ink-300"
+                    >
+                      Address of the parking spot
+                    </label>
+                    <div className="relative">
+                      <MapPin className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-400" />
                       <input
                         ref={addressInputRef}
                         type="text"
-                        id="address"
+                        id="report-address"
                         value={address}
-                        onChange={(e) => setAddress(e.target.value)}
-                        className="mt-1 block w-full border border-gray-300 dark:border-gray-600 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm dark:bg-gray-700 dark:text-white"
-                        placeholder="Enter the address"
-                        required
+                        onChange={(e) => {
+                          setAddress(e.target.value);
+                          setSelectedCoordinates(null);
+                        }}
+                        className="input-field pl-10"
+                        placeholder="Start typing an address…"
                         autoComplete="off"
                       />
                     </div>
-                    <div className="flex justify-between">
-                      <button
-                        type="button"
-                        onClick={() => setStep(1)}
-                        className="text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 dark:hover:text-indigo-300"
-                      >
-                        Back
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setStep(3)}
-                        disabled={!address || !selectedCoordinates}
-                        className="bg-indigo-600 text-white px-4 py-2 rounded-md hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        Next
-                      </button>
-                    </div>
-                  </>
+                    <p className="mt-1.5 text-xs text-ink-400">
+                      Pick an address from the suggestions.
+                    </p>
+                  </div>
                 )}
+
+                <div className="flex items-center justify-between">
+                  <button
+                    type="button"
+                    onClick={() => setStep(1)}
+                    className="text-sm font-semibold text-ink-500 transition-colors hover:text-ink-800 dark:hover:text-ink-200"
+                  >
+                    Back
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setStep(3)}
+                    disabled={
+                      location === "current"
+                        ? !currentAddress
+                        : !address || !selectedCoordinates
+                    }
+                    className="btn-primary px-6 py-2.5"
+                  >
+                    Continue
+                  </button>
+                </div>
               </div>
             )}
 
             {step === 3 && (
-              <div className="space-y-4">
+              <div className="space-y-5">
                 <div>
-                  <label
-                    htmlFor="spots"
-                    className="block text-sm font-medium text-gray-700 dark:text-gray-300"
-                  >
-                    Number of Available Spots
-                  </label>
-                  <input
-                    type="number"
-                    id="spots"
-                    value={spots}
-                    onChange={(e) => setSpots(e.target.value)}
-                    min="1"
-                    className="mt-1 block w-full border border-gray-300 dark:border-gray-600 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm dark:bg-gray-700 dark:text-white"
-                    required
-                  />
+                  <p className="text-sm font-medium text-ink-700 dark:text-ink-300">
+                    How many open spots do you see?
+                  </p>
+                  <div className="mt-4 flex items-center justify-center gap-5">
+                    <button
+                      type="button"
+                      onClick={() => setSpots((n) => Math.max(1, n - 1))}
+                      disabled={spots <= 1}
+                      className="flex h-12 w-12 items-center justify-center rounded-full border-2 border-ink-200 text-ink-600 transition-colors hover:border-brand-500 hover:text-brand-600 disabled:opacity-40 dark:border-ink-700 dark:text-ink-300"
+                      aria-label="Fewer spots"
+                    >
+                      <Minus className="h-5 w-5" />
+                    </button>
+                    <div className="w-24 text-center">
+                      <span className="font-display text-5xl font-bold text-ink-900 dark:text-white">
+                        {spots}
+                      </span>
+                      <p className="mt-1 text-xs font-medium text-ink-400">
+                        spot{spots !== 1 ? "s" : ""}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setSpots((n) => Math.min(MAX_SPOTS, n + 1))}
+                      disabled={spots >= MAX_SPOTS}
+                      className="flex h-12 w-12 items-center justify-center rounded-full border-2 border-ink-200 text-ink-600 transition-colors hover:border-brand-500 hover:text-brand-600 disabled:opacity-40 dark:border-ink-700 dark:text-ink-300"
+                      aria-label="More spots"
+                    >
+                      <Plus className="h-5 w-5" />
+                    </button>
+                  </div>
                 </div>
 
-                <div className="flex justify-between">
+                <div className="flex items-center justify-between">
                   <button
                     type="button"
                     onClick={() => setStep(2)}
-                    className="text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 dark:hover:text-indigo-300"
+                    className="text-sm font-semibold text-ink-500 transition-colors hover:text-ink-800 dark:hover:text-ink-200"
                   >
                     Back
                   </button>
                   <button
                     type="submit"
                     disabled={isSubmitting}
-                    className="bg-indigo-600 text-white px-4 py-2 rounded-md hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="btn-primary px-6 py-2.5"
                   >
-                    {isSubmitting ? "Submitting..." : "Submit Report"}
+                    {isSubmitting ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Submitting…
+                      </>
+                    ) : (
+                      "Submit report"
+                    )}
                   </button>
                 </div>
               </div>
             )}
 
             {error && (
-              <p className="text-red-600 dark:text-red-400 text-sm">{error}</p>
+              <div
+                role="alert"
+                className="mt-4 flex items-start gap-2.5 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700 dark:bg-red-950/40 dark:text-red-400"
+              >
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                {error}
+              </div>
             )}
           </form>
         </div>
       </div>
+
       <SuccessModal
         isOpen={showSuccess}
         onClose={handleSuccessClose}
-        message="Parking spot reported successfully!"
+        title="Spot reported"
+        message="Thanks for helping your neighbors. Your report will be visible to searchers for the next hour."
       />
     </>
   );
